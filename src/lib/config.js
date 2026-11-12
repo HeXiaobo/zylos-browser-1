@@ -18,6 +18,7 @@ export const KNOWLEDGE_DIR = path.join(DATA_DIR, 'knowledge');
 export const SEQUENCES_DIR = path.join(DATA_DIR, 'sequences');
 export const SCREENSHOTS_DIR = path.join(DATA_DIR, 'screenshots');
 export const LOGS_DIR = path.join(DATA_DIR, 'logs');
+export const LOGINS_PATH = path.join(DATA_DIR, 'logins.json');
 export const ENV_FILE = path.join(ZYLOS_DIR, '.env');
 
 // Default configuration (matches arch doc §9)

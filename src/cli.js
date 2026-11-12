@@ -33,6 +33,8 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const cmd = cleanArgs[0];
+// Exit code for "a human needs to log in" (distinct from generic errors = 1)
+const LOGIN_REQUIRED_EXIT = 3;
 const cmdArgs = cleanArgs.slice(1);
 
 async function main() {
@@ -133,6 +135,11 @@ async function main() {
         await knowledgeCmd(cmdArgs);
         break;
 
+      // --- Login registry ---
+      case 'login':
+        await loginCmd(cmdArgs, opts);
+        break;
+
       // --- Display management ---
       case 'display':
         await displayCmd(cmdArgs);
@@ -144,6 +151,10 @@ async function main() {
         process.exit(1);
     }
   } catch (err) {
+    if (err.code === 'LOGIN_REQUIRED') {
+      console.error(`[${err.code}] ${err.message}`);
+      process.exit(LOGIN_REQUIRED_EXIT);
+    }
     if (err.code) {
       // Structured error from our error classes
       console.error(`[${err.code}] ${err.message}`);
@@ -275,6 +286,124 @@ async function knowledgeCmd(cmdArgs) {
 }
 
 /**
+ * Parse --flag value pairs out of an args array.
+ * Returns { positional, flags }. Boolean flags listed in `booleans`.
+ */
+function parseFlags(argv, booleans = []) {
+  const positional = [];
+  const flags = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) {
+      const name = a.slice(2);
+      if (booleans.includes(name)) {
+        flags[name] = true;
+      } else {
+        if (argv[i + 1] === undefined) {
+          console.error(`Missing value for --${name}`);
+          process.exit(1);
+        }
+        flags[name] = argv[++i];
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  return { positional, flags };
+}
+
+/**
+ * Login registry subcommands
+ */
+async function loginCmd(cmdArgs, browserOpts) {
+  const sub = cmdArgs[0];
+  const usage = 'Usage: zylos-browser login <pick|check|mark|list> ...';
+  if (!sub) {
+    console.error(usage);
+    process.exit(1);
+  }
+
+  const logins = await import('./lib/logins.js');
+  const { positional, flags } = parseFlags(cmdArgs.slice(1), ['json']);
+
+  switch (sub) {
+    case 'pick': {
+      const domain = requireArg(positional[0], 'domain');
+      const maxAgeHours = flags['max-age'] !== undefined ? Number(flags['max-age']) : undefined;
+      if (maxAgeHours !== undefined && !(maxAgeHours >= 0)) {
+        console.error('--max-age must be a number of hours');
+        process.exit(1);
+      }
+      const entry = logins.pickProfile(domain, { profile: flags.profile, maxAgeHours });
+      if (flags.json) {
+        let cdpPort = null;
+        try { cdpPort = logins.resolveProfilePort(entry.profile, getConfig()); } catch { /* undeclared profile */ }
+        console.log(JSON.stringify({ ...entry, cdp_port: cdpPort }, null, 2));
+      } else {
+        console.log(entry.profile);
+        console.error(`(${entry.domain}: last confirmed ${entry.last_confirmed_at} via ${entry.confirm_method})`);
+      }
+      break;
+    }
+
+    case 'mark': {
+      const domain = requireArg(positional[0], 'domain');
+      const profile = requireArg(flags.profile, 'profile (--profile <name>)');
+      if (flags.url !== undefined) {
+        throw new Error('login mark does not store check URLs; pass --url to login check instead');
+      }
+      const entry = logins.markLogin(domain, profile, { how: flags.how });
+      console.log(`Marked: profile "${entry.profile}" logged in to ${entry.domain} (${entry.confirm_method}, ${entry.last_confirmed_at}).`);
+      break;
+    }
+
+    case 'check': {
+      const domain = requireArg(positional[0], 'domain');
+      const { Browser } = await import('./lib/browser.js');
+      const results = await logins.checkLogin(domain, {
+        profile: flags.profile,
+        how: flags.how,
+        url: flags.url,
+        cdpPort: browserOpts.cdpPort,
+        browserFactory: ({ cdpPort }) => new Browser({ ...browserOpts, cdpPort })
+      });
+      let anyExpired = false;
+      for (const r of results) {
+        if (r.loggedIn) {
+          console.log(`OK: profile "${r.profile}" is logged in to ${r.entry.domain} (${r.reason}).`);
+        } else {
+          anyExpired = true;
+          console.error(`[LOGIN_REQUIRED] Profile "${r.profile}" login expired on ${r.entry.domain} (${r.reason}). A human needs to log in again, then run: zylos-browser login mark ${r.entry.domain} --profile ${r.profile}`);
+        }
+      }
+      if (anyExpired) process.exit(LOGIN_REQUIRED_EXIT);
+      break;
+    }
+
+    case 'list': {
+      const entries = logins.listLogins();
+      if (flags.json) {
+        console.log(JSON.stringify(entries, null, 2));
+        break;
+      }
+      if (entries.length === 0) {
+        console.log('No logins registered.');
+        break;
+      }
+      for (const e of entries) {
+        console.log(`${e.domain}  profile=${e.profile}  status=${e.status}  confirmed=${e.last_confirmed_at} (${e.confirm_method})  expired=${e.last_expired_at ?? '-'}`);
+      }
+      break;
+    }
+
+    default:
+      console.error(`Unknown login command: ${sub}`);
+      console.error(usage);
+      process.exit(1);
+  }
+}
+
+/**
  * Display subcommands
  */
 async function displayCmd(cmdArgs) {
@@ -364,6 +493,16 @@ Knowledge:
   knowledge <domain>           Show knowledge for domain
   knowledge add-gotcha <domain> "<text>"
   knowledge domains            List domains
+
+Login registry (which profile is logged in where; no secrets stored):
+  login pick <domain> [--profile x] [--max-age h] [--json]
+                               Print the profile to use; exit 3 if none is
+                               logged in (a human must log in)
+  login check <domain> [--profile x] [--how url|selector=<css>] [--url u]
+                               Open the site and confirm or mark expired
+  login mark <domain> --profile x [--how manual|url|selector=<css>]
+                               Record a login done by a human
+  login list [--json]          List registered logins
 
 Display:
   display status               Show Xvfb/VNC status

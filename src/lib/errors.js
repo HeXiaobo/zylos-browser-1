@@ -39,3 +39,10 @@ export class DependencyError extends BrowserError {
     this.name = 'DependencyError';
   }
 }
+
+export class LoginRequiredError extends BrowserError {
+  constructor(message, details = null) {
+    super(message, 'LOGIN_REQUIRED', details);
+    this.name = 'LoginRequiredError';
+  }
+}

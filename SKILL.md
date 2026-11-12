@@ -15,6 +15,7 @@ lifecycle:
     pre-uninstall: hooks/pre-uninstall.js
   preserve:
     - config.json
+    - logins.json
     - knowledge/
     - sequences/
     - screenshots/
@@ -93,6 +94,10 @@ zylos-browser tab <index>
 zylos-browser newtab [url]
 zylos-browser closetab [index]
 ```
+
+### Login registry
+
+For sites requiring login, use `zylos-browser login pick <domain>` to find an existing profile before browsing. If it exits 3, a person must log in to that profile and register it; do not create another profile automatically. After a human login, run `zylos-browser login mark <domain> --profile <name>`. Use `login list` to inspect registrations and `login check <domain> --profile <name> --url <protected-page> --how 'selector=<css>'` to check a site-specific authenticated indicator. URL-only checks are heuristic: a public page or an unrecognized login page can look authenticated. Check URLs and selectors are supplied on each check and are not stored in `logins.json`. Use `--profile` when overriding a CDP port. Named profiles map to CDP ports through `profiles` in config.json.
 
 ### Sequence Runner
 
